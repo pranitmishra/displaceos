@@ -452,8 +452,8 @@
               <span className={`w-2 h-2 rounded-full ${isNearDisaster ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></span>
               <span className="text-zinc-300 font-mono">
                 {isNearDisaster 
-                  ? `Zone Alpha (${distanceToDisaster} km away)` 
-                  : `Outside Zone (${distanceToDisaster} km away)`}
+                  ? `${distanceToDisaster} km away` 
+                  : `Outside disaster zone (${distanceToDisaster} km)`}
               </span>
             </div>
             <div className="flex items-center gap-1">
@@ -733,7 +733,7 @@
                     : 'bg-[#1a1d26] hover:bg-[#232733] text-zinc-200 border border-zinc-700/80 active:scale-95'
                 }`}
               >
-                <span>Add photo feature</span>
+                <span>Add photo</span>
               </button>
             )}
           </div>
@@ -786,7 +786,8 @@
     // COMPONENT: REQUEST CONFIRMATION PAGE
     // ==============================================================================
     function RequestConfirmPage({ category, userLocation, capturedPhoto, onBack, onSubmit }) {
-      const [peopleCount, setPeopleCount] = useState(1);
+      const [peopleCount, setPeopleCount] = useState('1-5');
+      const [customPeopleCount, setCustomPeopleCount] = useState('');
       const [urgency, setUrgency] = useState('high');
       const [notes, setNotes] = useState('');
       const [submitting, setSubmitting] = useState(false);
@@ -879,21 +880,41 @@
               {/* Number of People */}
               <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1.5">Number of people needing assistance</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {[1, 2, 4, '5+'].map((num) => (
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  {['1-5', '5-10', '10-15'].map((range) => (
                     <button
-                      key={num}
+                      key={range}
                       type="button"
-                      onClick={() => setPeopleCount(num)}
+                      onClick={() => { setPeopleCount(range); setCustomPeopleCount(''); }}
                       className={`py-2 rounded-xl text-xs font-semibold transition ${
-                        peopleCount === num
+                        peopleCount === range
                           ? 'bg-white text-black font-bold'
                           : 'bg-[#12141a] text-zinc-300 border border-zinc-800 hover:border-zinc-700'
                       }`}
                     >
-                      {num === '5+' ? '5+ people' : (num === 1 ? '1 person' : num + ' people')}
+                      {range} people
                     </button>
                   ))}
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="Enter number"
+                      value={customPeopleCount}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setCustomPeopleCount(val);
+                        if (val && parseInt(val) > 0) {
+                          setPeopleCount(parseInt(val));
+                        }
+                      }}
+                      className={`w-full py-2 rounded-xl text-xs font-semibold text-center transition bg-[#12141a] border outline-none ${
+                        customPeopleCount
+                          ? 'border-white text-white bg-white/10'
+                          : 'border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                      }`}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1648,88 +1669,6 @@
                 </div>
               </div>
 
-              {/* Supabase Connection */}
-              <div className="p-4 rounded-xl bg-[#12141a] border border-zinc-800 space-y-3">
-                <h3 className="font-bold text-white text-sm">Supabase Database Connection</h3>
-                <p className="text-zinc-400 text-[11px]">
-                  Provide your Supabase Project URL and Anon Public Key to sync directly with PostgreSQL cloud tables.
-                </p>
-
-                <div>
-                  <label className="text-zinc-400 block mb-1">Supabase URL</label>
-                  <input 
-                    type="text"
-                    placeholder="https://xyzcompany.supabase.co"
-                    value={supabaseConfig.url}
-                    onChange={(e) => {
-                      const updated = { ...supabaseConfig, url: e.target.value };
-                      setSupabaseConfig(updated);
-                      localStorage.setItem('displace_sb_url', e.target.value);
-                    }}
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded p-1.5 text-xs text-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-zinc-400 block mb-1">Supabase Anon Key</label>
-                  <input 
-                    type="password"
-                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                    value={supabaseConfig.key}
-                    onChange={(e) => {
-                      const updated = { ...supabaseConfig, key: e.target.value };
-                      setSupabaseConfig(updated);
-                      localStorage.setItem('displace_sb_key', e.target.value);
-                    }}
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded p-1.5 text-xs text-white"
-                  />
-                </div>
-
-                <div className="pt-2 text-[10px] text-zinc-500 font-mono">
-                  Schema script: `supabase_schema.sql` included in root folder.
-                </div>
-              </div>
-
-              {/* Map Service & API Key Settings */}
-              <div className="p-4 rounded-xl bg-[#12141a] border border-zinc-800 space-y-3">
-                <h3 className="font-bold text-white text-sm">Map Service & API Key</h3>
-                <p className="text-zinc-400 text-[11px]">
-                  DisplaceOS defaults to Clean Street Maps (no watermark, no API key needed). If you use CARTO or another tile provider, you can paste your API key below.
-                </p>
-
-                <div>
-                  <label className="text-zinc-400 block mb-1">Active Map Provider</label>
-                  <select
-                    value={mapProvider}
-                    onChange={(e) => {
-                      setMapProvider(e.target.value);
-                      localStorage.setItem('displace_map_provider', e.target.value);
-                    }}
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded p-1.5 text-xs text-white"
-                  >
-                    <option value="esri">Clean Street Map (Default - 100% Watermark Free, No Key Required)</option>
-                    <option value="satellite">Satellite Imagery (High-Res Aerial - No Key Required)</option>
-                    <option value="carto">CARTO Voyager (Requires API key below to remove watermark)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-zinc-400 block mb-1">Map API Key</label>
-                  <input 
-                    type="text"
-                    placeholder="Enter CARTO / Mapbox API Key"
-                    value={mapApiKey}
-                    onChange={(e) => {
-                      setMapApiKey(e.target.value);
-                      localStorage.setItem('displace_map_api_key', e.target.value);
-                    }}
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded p-1.5 text-xs text-white font-mono placeholder-zinc-500"
-                  />
-                  <p className="text-[10px] text-zinc-500 mt-1">
-                    {mapApiKey ? '✓ API Key configured and stored locally.' : 'No API key entered. Clean Street Map will be used without watermarks.'}
-                  </p>
-                </div>
-              </div>
             </div>
           )}
 
