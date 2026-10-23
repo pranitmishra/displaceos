@@ -1,0 +1,1571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>DisplaceOS - Disaster Relief Assistance</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            darkbg: '#0a0b0e',
+            cardbg: '#12141a',
+            cardborder: '#222530',
+            brandgreen: '#10b981',
+          },
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Leaflet CSS & JS for OpenStreetMap -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <!-- React & ReactDOM (Production UMD) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Supabase JS Client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    /* Custom Scrollbar and iOS mobile feel */
+    body {
+      background-color: #07080a;
+      color: #ffffff;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+      touch-action: manipulation;
+    }
+    .custom-scroll::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #2a2e3d;
+      border-radius: 9999px;
+    }
+    .leaflet-popup-content-wrapper {
+      background: #181b24;
+      color: #fff;
+      border-radius: 12px;
+      border: 1px solid #2d3345;
+    }
+    .leaflet-popup-tip {
+      background: #181b24;
+    }
+    /* Pulse animations */
+    @keyframes subtle-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.85; transform: scale(0.98); }
+    }
+    .pulse-alert {
+      animation: subtle-pulse 2s infinite ease-in-out;
+    }
+  </style>
+</head>
+<body class="bg-[#07080a] min-h-screen text-white font-sans flex justify-center items-start">
+  <div id="root" class="w-full"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // ==============================================================================
+    // DEFAULT CONFIGURATION & DISASTER ZONE
+    // ==============================================================================
+    const INITIAL_DISASTER_ZONE = {
+      name: "Flood & Disaster Impact Zone Alpha",
+      lat: 28.6139,  // Default reference coordinates
+      lng: 77.2090,
+      radiusKm: 25.0 // Active perimeter radius in km
+    };
+
+    // Haversine formula to compute distance in kilometers
+    function calculateDistanceKm(lat1, lon1, lat2, lon2) {
+      const R = 6371; // Radius of the Earth in km
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = 
+        Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+        Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return Number((R * c).toFixed(2));
+    }
+
+    // ==============================================================================
+    // PICTOGRAPH ICONS (Pixel-matching the user reference image)
+    // ==============================================================================
+    const Icons = {
+      // 1. Food: Steaming pot with handles & soup
+      Food: () => (
+        <svg viewBox="0 0 64 64" className="w-12 h-12" fill="none" xmlns="http://www.w3.org/2000/svg">
+          {/* Steam wisps */}
+          <path d="M24 16C22 13 24 10 26 8" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" opacity="0.85" />
+          <path d="M32 17C30 13 32 9 34 6" stroke="#fbbf24" strokeWidth="2.5" strokeLinecap="round" opacity="0.95" />
+          <path d="M40 16C38 13 40 10 42 8" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" opacity="0.85" />
+          {/* Pot Handles */}
+          <path d="M12 32C9 32 7 34 7 37C7 40 9 42 12 42" stroke="#71717a" strokeWidth="3" strokeLinecap="round" />
+          <path d="M52 32C55 32 57 34 57 37C57 40 55 42 52 42" stroke="#71717a" strokeWidth="3" strokeLinecap="round" />
+          {/* Main Pot Body */}
+          <ellipse cx="32" cy="28" rx="20" ry="7" fill="#3f3f46" stroke="#52525b" strokeWidth="1.5"/>
+          <path d="M12 28C12 28 14 50 32 50C50 50 52 28 52 28" fill="url(#potGrad)" stroke="#52525b" strokeWidth="1.5" />
+          {/* Soup in Pot */}
+          <ellipse cx="32" cy="29" rx="17" ry="5.5" fill="url(#soupGrad)"/>
+          <circle cx="28" cy="30" r="1.5" fill="#f59e0b" />
+          <circle cx="35" cy="28.5" r="1.2" fill="#ef4444" />
+          <circle cx="32" cy="31" r="1.8" fill="#10b981" />
+          <defs>
+            <linearGradient id="potGrad" x1="12" y1="28" x2="52" y2="50" gradientUnits="userSpaceOnUse">
+              <stop stopColor="#27272a"/>
+              <stop offset="0.5" stopColor="#3f3f46"/>
+              <stop offset="1" stopColor="#18181b"/>
+            </linearGradient>
+            <linearGradient id="soupGrad" x1="15" y1="29" x2="49" y2="29" gradientUnits="userSpaceOnUse">
+              <stop stopColor="#b45309"/>
+              <stop offset="0.6" stopColor="#d97706"/>
+              <stop offset="1" stopColor="#92400e"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      ),
+
+      // 2. Water: Glossy cyan-blue droplet
+      Water: () => (
+        <svg viewBox="0 0 64 64" className="w-12 h-12" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M32 8C32 8 16 29 16 41C16 49.8366 23.1634 57 32 57C40.8366 57 48 49.8366 48 41C48 29 32 8 32 8Z" 
+                fill="url(#waterGrad)" />
+          {/* Gloss highlight */}
+          <path d="M26 26C23 31 23 37 25 41" stroke="#ffffff" strokeWidth="3.5" strokeLinecap="round" opacity="0.65" />
+          <ellipse cx="37" cy="47" rx="3.5" ry="2" fill="#ffffff" opacity="0.4" />
+          <defs>
+            <linearGradient id="waterGrad" x1="32" y1="8" x2="32" y2="57" gradientUnits="userSpaceOnUse">
+              <stop stopColor="#38bdf8"/>
+              <stop offset="0.55" stopColor="#0284c7"/>
+              <stop offset="1" stopColor="#0369a1"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      ),
+
+      // 3. Medicine: Stethoscope
+      Medicine: () => (
+        <svg viewBox="0 0 64 64" className="w-12 h-12" fill="none" xmlns="http://www.w3.org/2000/svg">
+          {/* Earpieces */}
+          <circle cx="21" cy="14" r="2.5" fill="#38bdf8" />
+          <circle cx="43" cy="14" r="2.5" fill="#38bdf8" />
+          <path d="M21 16V22C21 28 26 33 32 33C38 33 43 28 43 22V16" stroke="#94a3b8" strokeWidth="3" strokeLinecap="round" />
+          {/* Main Tube */}
+          <path d="M32 33V40C32 46 36 50 42 50C48 50 51 45 51 40V36" stroke="#0ea5e9" strokeWidth="3.5" strokeLinecap="round" />
+          {/* Diaphragm / Chestpiece */}
+          <circle cx="51" cy="33" r="6" fill="#334155" stroke="#94a3b8" strokeWidth="2.5" />
+          <circle cx="51" cy="33" r="2.5" fill="#38bdf8" />
+        </svg>
+      ),
+
+      // 4. Rescue: Nautical Lifebuoy Ring
+      Rescue: () => (
+        <svg viewBox="0 0 64 64" className="w-12 h-12" fill="none" xmlns="http://www.w3.org/2000/svg">
+          {/* Outer circle */}
+          <circle cx="32" cy="32" r="24" fill="#ffffff" stroke="#e2e8f0" strokeWidth="1.5" />
+          {/* Red Segments */}
+          <path d="M32 8A24 24 0 0 1 49 15L40 24A12 12 0 0 0 32 20Z" fill="#ef4444" />
+          <path d="M49 49A24 24 0 0 1 32 56V44A12 12 0 0 0 40 40Z" fill="#ef4444" />
+          <path d="M15 49A24 24 0 0 1 8 32H20A12 12 0 0 0 24 40Z" fill="#ef4444" />
+          <path d="M8 32A24 24 0 0 1 15 15L24 24A12 12 0 0 0 20 32Z" fill="#ef4444" />
+          {/* Inner ring cutout */}
+          <circle cx="32" cy="32" r="11" fill="#12141a" stroke="#475569" strokeWidth="1.5" />
+          {/* Outer lifeline ropes */}
+          <circle cx="32" cy="32" r="25" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="5 5" />
+        </svg>
+      ),
+
+      // 5. Shelter: Camping Tent
+      Shelter: () => (
+        <svg viewBox="0 0 64 64" className="w-12 h-12" fill="none" xmlns="http://www.w3.org/2000/svg">
+          {/* Left Canvas Panel */}
+          <path d="M32 14L10 48H32L32 14Z" fill="#f97316" stroke="#ea580c" strokeWidth="1.5" />
+          {/* Right Canvas Panel */}
+          <path d="M32 14L54 48H32L32 14Z" fill="#ea580c" stroke="#c2410c" strokeWidth="1.5" />
+          {/* Tent Door Flap / Entrance */}
+          <path d="M32 26L22 48H42L32 26Z" fill="#1e1b18" />
+          <path d="M32 14V48" stroke="#fdba74" strokeWidth="1.5" />
+          {/* Guy-lines to ground */}
+          <path d="M10 48L5 52" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" />
+          <path d="M54 48L59 52" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      ),
+
+      // 6. Other: SOS Badge
+      SOS: () => (
+        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-red-500 to-rose-700 flex items-center justify-center shadow-lg shadow-red-600/30 border border-red-400/40">
+          <span className="text-white font-black tracking-wider text-sm">SOS</span>
+        </div>
+      ),
+
+      // Camera Outline Icon
+      Camera: () => (
+        <svg className="w-7 h-7 text-zinc-100" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" 
+                d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      ),
+
+      // Heart Logo
+      HeartLogo: () => (
+        <div className="w-9 h-9 rounded-xl bg-zinc-900 border border-zinc-700/80 flex items-center justify-center shadow-sm">
+          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" 
+                  d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v6m-3-3h6" opacity="0.75" />
+          </svg>
+        </div>
+      ),
+
+      // Globe Icon
+      Globe: () => (
+        <svg className="w-5 h-5 text-zinc-400 hover:text-white transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" strokeWidth="1.8"/>
+          <path strokeWidth="1.8" d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+        </svg>
+      )
+    };
+
+    // Category Definitions
+    const CATEGORIES = [
+      { id: 'Food', label: 'Food', icon: Icons.Food, color: 'text-amber-400' },
+      { id: 'Water', label: 'Water', icon: Icons.Water, color: 'text-cyan-400' },
+      { id: 'Medicine', label: 'Medicine', icon: Icons.Medicine, color: 'text-sky-400' },
+      { id: 'Rescue', label: 'Rescue', icon: Icons.Rescue, color: 'text-rose-400' },
+      { id: 'Shelter', label: 'Shelter', icon: Icons.Shelter, color: 'text-orange-400' },
+      { id: 'Other', label: 'Other', icon: Icons.SOS, color: 'text-red-400' },
+    ];
+
+    // ==============================================================================
+    // MAIN APP COMPONENT
+    // ==============================================================================
+    function App() {
+      // Navigation state: 'home' | 'request_confirm' | 'photo_confirm' | 'success' | 'official_login' | 'official_dashboard'
+      const [currentPage, setCurrentPage] = useState('home');
+
+      // Selection & Input state
+      const [selectedCategory, setSelectedCategory] = useState('Food'); // Default 'Food' as in mockup screenshot
+      const [capturedPhoto, setCapturedPhoto] = useState(null);
+      const [photoFileName, setPhotoFileName] = useState('');
+      const [successMessage, setSuccessMessage] = useState('');
+      const [lastBeaconId, setLastBeaconId] = useState('');
+
+      // Geolocation & Disaster Geofencing state
+      const [userLocation, setUserLocation] = useState(null); // { lat, lng }
+      const [locationStatus, setLocationStatus] = useState('prompt'); // 'prompt' | 'granted' | 'denied' | 'error'
+      const [disasterZone, setDisasterZone] = useState(INITIAL_DISASTER_ZONE);
+      const [isNearDisaster, setIsNearDisaster] = useState(true);
+      const [distanceToDisaster, setDistanceToDisaster] = useState(1.4);
+      const [isSimulatedOutside, setIsSimulatedOutside] = useState(false);
+
+      // Official Login & Auth
+      const [isOfficialAuthenticated, setIsOfficialAuthenticated] = useState(false);
+      const [requestsList, setRequestsList] = useState([]);
+
+      // Supabase Client Config (Persisted in localStorage)
+      const [supabaseConfig, setSupabaseConfig] = useState(() => {
+        return {
+          url: localStorage.getItem('displace_sb_url') || '',
+          key: localStorage.getItem('displace_sb_key') || ''
+        };
+      });
+
+      // 1. Initial Load: Auto-request Location permission
+      useEffect(() => {
+        requestUserLocation();
+        loadExistingRequests();
+      }, []);
+
+      // 2. Recompute geofence whenever user location or disaster zone updates
+      useEffect(() => {
+        if (!userLocation) return;
+        
+        let effectiveLat = userLocation.lat;
+        let effectiveLng = userLocation.lng;
+
+        // If user toggles simulation to test "Outside Disaster Zone"
+        if (isSimulatedOutside) {
+          effectiveLat += 1.8; // ~200 km away
+          effectiveLng += 1.5;
+        }
+
+        const dist = calculateDistanceKm(effectiveLat, effectiveLng, disasterZone.lat, disasterZone.lng);
+        setDistanceToDisaster(dist);
+        setIsNearDisaster(dist <= disasterZone.radiusKm);
+      }, [userLocation, disasterZone, isSimulatedOutside]);
+
+      // Request Geolocation function
+      const requestUserLocation = () => {
+        if (!navigator.geolocation) {
+          setLocationStatus('denied');
+          // Fallback location near disaster center for demonstration
+          setUserLocation({ lat: disasterZone.lat + 0.015, lng: disasterZone.lng + 0.012 });
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            const loc = {
+              lat: Number(position.coords.latitude.toFixed(6)),
+              lng: Number(position.coords.longitude.toFixed(6))
+            };
+            setUserLocation(loc);
+            setLocationStatus('granted');
+            
+            // Adjust disaster zone epicenter near the user by default so user can test inside zone immediately
+            setDisasterZone(prev => ({
+              ...prev,
+              lat: Number((loc.lat + 0.012).toFixed(6)),
+              lng: Number((loc.lng + 0.010).toFixed(6))
+            }));
+          },
+          (err) => {
+            console.warn("Geolocation denied or unavailable:", err.message);
+            setLocationStatus('denied');
+            // Provide simulated active position near disaster zone
+            setUserLocation({ lat: disasterZone.lat + 0.015, lng: disasterZone.lng + 0.012 });
+          },
+          { enableHighAccuracy: true, timeout: 8000 }
+        );
+      };
+
+      // Load requests from Supabase / localStorage
+      const loadExistingRequests = async () => {
+        try {
+          const cached = localStorage.getItem('displace_requests');
+          if (cached) {
+            setRequestsList(JSON.parse(cached));
+          } else {
+            // Seed initial mock requests for official dashboard preview
+            const seed = [
+              {
+                id: 'req-' + Math.random().toString(36).substr(2, 6),
+                category: 'rescue',
+                latitude: disasterZone.lat + 0.011,
+                longitude: disasterZone.lng + 0.008,
+                notes: 'Elderly residents trapped due to high water level',
+                people_count: 4,
+                urgency: 'critical',
+                status: 'pending',
+                created_at: new Date(Date.now() - 15 * 60000).toISOString(),
+                photo_url: null
+              },
+              {
+                id: 'req-' + Math.random().toString(36).substr(2, 6),
+                category: 'food',
+                latitude: disasterZone.lat - 0.008,
+                longitude: disasterZone.lng + 0.014,
+                notes: 'Need dry rations and clean infant formula',
+                people_count: 5,
+                urgency: 'high',
+                status: 'dispatched',
+                created_at: new Date(Date.now() - 45 * 60000).toISOString(),
+                photo_url: null
+              },
+              {
+                id: 'req-' + Math.random().toString(36).substr(2, 6),
+                category: 'medicine',
+                latitude: disasterZone.lat + 0.004,
+                longitude: disasterZone.lng - 0.012,
+                notes: 'Asthma inhaler and first aid supplies needed',
+                people_count: 2,
+                urgency: 'critical',
+                status: 'in_progress',
+                created_at: new Date(Date.now() - 70 * 60000).toISOString(),
+                photo_url: null
+              }
+            ];
+            setRequestsList(seed);
+            localStorage.setItem('displace_requests', JSON.stringify(seed));
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      };
+
+      // Handle photo capture / upload
+      const handlePhotoFileChange = (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+
+        setPhotoFileName(file.name);
+        const reader = new FileReader();
+        reader.onload = (uploadEvent) => {
+          setCapturedPhoto(uploadEvent.target.result);
+        };
+        reader.readAsDataURL(file);
+      };
+
+      // Submit Request (from Request Confirm Page or Photo Confirm Page)
+      const submitReliefRequest = async ({ category, notes, peopleCount, urgency, photo }) => {
+        const beaconId = 'DISP-' + Math.floor(1000 + Math.random() * 9000);
+        setLastBeaconId(beaconId);
+
+        const newRequest = {
+          id: beaconId,
+          category: category.toLowerCase(),
+          latitude: userLocation ? userLocation.lat : disasterZone.lat,
+          longitude: userLocation ? userLocation.lng : disasterZone.lng,
+          notes: notes || 'Assistance requested via mobile beacon',
+          people_count: peopleCount || 1,
+          urgency: urgency || 'high',
+          status: 'pending',
+          photo_url: photo || capturedPhoto || null,
+          created_at: new Date().toISOString()
+        };
+
+        // Try Supabase insert if configured
+        if (supabaseConfig.url && supabaseConfig.key && window.supabase) {
+          try {
+            const sb = window.supabase.createClient(supabaseConfig.url, supabaseConfig.key);
+            await sb.from('relief_requests').insert([newRequest]);
+            console.log("Uploaded successfully to Supabase Database");
+          } catch (sbErr) {
+            console.warn("Supabase upload note:", sbErr);
+          }
+        }
+
+        // Always update local cache for real-time reactivity
+        const updated = [newRequest, ...requestsList];
+        setRequestsList(updated);
+        localStorage.setItem('displace_requests', JSON.stringify(updated));
+
+        // Clear captured photo
+        setCapturedPhoto(null);
+        setPhotoFileName('');
+
+        return beaconId;
+      };
+
+      // ============================================================================
+      // RENDER CURRENT PAGE ROUTE
+      // ============================================================================
+      return (
+        <div className="w-full max-w-md mx-auto min-h-screen bg-[#07080a] flex flex-col justify-between relative shadow-2xl border-x border-zinc-900 overflow-x-hidden">
+          
+          {/* Top Location / Geofence Simulator Bar (Helpful for test & evaluation) */}
+          <div className="bg-[#11131a] px-3 py-1.5 border-b border-zinc-800 text-[11px] flex items-center justify-between z-40">
+            <div className="flex items-center gap-1.5 truncate">
+              <span className={`w-2 h-2 rounded-full ${isNearDisaster ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></span>
+              <span className="text-zinc-300 font-mono">
+                {isNearDisaster 
+                  ? `Zone Alpha (${distanceToDisaster} km away)` 
+                  : `Outside Zone (${distanceToDisaster} km away)`}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <button 
+                onClick={() => setIsSimulatedOutside(!isSimulatedOutside)}
+                className={`px-2 py-0.5 rounded text-[10px] font-medium transition ${
+                  isSimulatedOutside 
+                    ? 'bg-rose-900/60 text-rose-300 border border-rose-700' 
+                    : 'bg-zinc-800 text-zinc-400 hover:text-white'
+                }`}
+                title="Toggle between inside and outside disaster zone to test permissions"
+              >
+                {isSimulatedOutside ? '⚡ Simulating: Far Away' : '✓ Simulating: Inside'}
+              </button>
+            </div>
+          </div>
+
+          {/* PAGE 1: HOMEPAGE (Pixel-identical to user screenshot) */}
+          {currentPage === 'home' && (
+            <HomePage 
+              selectedCategory={selectedCategory}
+              setSelectedCategory={setSelectedCategory}
+              capturedPhoto={capturedPhoto}
+              photoFileName={photoFileName}
+              handlePhotoFileChange={handlePhotoFileChange}
+              setCapturedPhoto={setCapturedPhoto}
+              isNearDisaster={isNearDisaster}
+              distanceToDisaster={distanceToDisaster}
+              onContinue={() => {
+                if (!isNearDisaster) return;
+                if (capturedPhoto) {
+                  setCurrentPage('photo_confirm');
+                } else {
+                  setCurrentPage('request_confirm');
+                }
+              }}
+              onOpenOfficialLogin={() => setCurrentPage('official_login')}
+            />
+          )}
+
+          {/* PAGE 2: REQUEST CONFIRMATION (Dispatched after choosing category) */}
+          {currentPage === 'request_confirm' && (
+            <RequestConfirmPage 
+              category={selectedCategory}
+              userLocation={userLocation}
+              capturedPhoto={capturedPhoto}
+              onBack={() => setCurrentPage('home')}
+              onSubmit={async (details) => {
+                const beaconId = await submitReliefRequest({
+                  category: selectedCategory,
+                  ...details,
+                  photo: capturedPhoto
+                });
+                setSuccessMessage("Request submitted, we will reach as soon as possible");
+                setCurrentPage('success');
+              }}
+            />
+          )}
+
+          {/* PAGE 3: PHOTO REPORT SUBMISSION */}
+          {currentPage === 'photo_confirm' && (
+            <PhotoConfirmPage 
+              photo={capturedPhoto}
+              userLocation={userLocation}
+              category={selectedCategory}
+              onBack={() => setCurrentPage('home')}
+              onSubmit={async (notes) => {
+                const beaconId = await submitReliefRequest({
+                  category: selectedCategory || 'photo_report',
+                  notes: notes || 'Incident photo captured on site',
+                  urgency: 'high',
+                  photo: capturedPhoto
+                });
+                setSuccessMessage("Photo submitted successfully");
+                setCurrentPage('success');
+              }}
+            />
+          )}
+
+          {/* SUCCESS BANNER & REDIRECT SCREEN */}
+          {currentPage === 'success' && (
+            <SuccessPage 
+              message={successMessage}
+              beaconId={lastBeaconId}
+              onRedirectHome={() => setCurrentPage('home')}
+            />
+          )}
+
+          {/* OFFICIAL LOGIN MODAL */}
+          {currentPage === 'official_login' && (
+            <OfficialLoginModal 
+              onSuccess={() => {
+                setIsOfficialAuthenticated(true);
+                setCurrentPage('official_dashboard');
+              }}
+              onClose={() => setCurrentPage('home')}
+            />
+          )}
+
+          {/* OFFICIAL COMMAND CENTER DASHBOARD */}
+          {currentPage === 'official_dashboard' && (
+            <OfficialDashboard 
+              requests={requestsList}
+              disasterZone={disasterZone}
+              setDisasterZone={setDisasterZone}
+              supabaseConfig={supabaseConfig}
+              setSupabaseConfig={setSupabaseConfig}
+              onUpdateRequestStatus={(reqId, newStatus) => {
+                const updated = requestsList.map(r => r.id === reqId ? { ...r, status: newStatus } : r);
+                setRequestsList(updated);
+                localStorage.setItem('displace_requests', JSON.stringify(updated));
+              }}
+              onLogout={() => {
+                setIsOfficialAuthenticated(false);
+                setCurrentPage('home');
+              }}
+            />
+          )}
+
+        </div>
+      );
+    }
+
+    // ==============================================================================
+    // COMPONENT: HOMEPAGE (Matching User Screenshot Layout)
+    // ==============================================================================
+    function HomePage({ 
+      selectedCategory, 
+      setSelectedCategory, 
+      capturedPhoto, 
+      photoFileName,
+      handlePhotoFileChange, 
+      setCapturedPhoto,
+      isNearDisaster,
+      distanceToDisaster,
+      onContinue,
+      onOpenOfficialLogin
+    }) {
+      const fileInputRef = useRef(null);
+
+      return (
+        <div className="flex-1 flex flex-col justify-between p-5 pt-4 text-white">
+          
+          {/* Top Header */}
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <Icons.HeartLogo />
+              <div>
+                <h1 className="text-xl font-bold tracking-tight text-white leading-tight">DisplaceOS</h1>
+                <p className="text-xs text-zinc-400 font-normal">Disaster relief assistance</p>
+              </div>
+            </div>
+            
+            <button 
+              className="p-2 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition"
+              title="Language / Localization"
+              onClick={() => alert("Multi-language assistance: English, Español, Français, Hindi, Bengali active.")}
+            >
+              <Icons.Globe />
+            </button>
+          </div>
+
+          {/* Main Headline */}
+          <div className="text-center mb-6">
+            <h2 className="text-2xl font-bold tracking-tight text-white mb-1.5">What help do you need?</h2>
+            <p className="text-xs text-zinc-400">Choose a picture below to continue.</p>
+          </div>
+
+          {/* Geofence Notice (When outside affected zone) */}
+          {!isNearDisaster && (
+            <div className="mb-5 p-3.5 rounded-2xl bg-rose-950/40 border border-rose-800/80 text-rose-200 text-xs flex items-start gap-2.5">
+              <span className="text-rose-400 text-base mt-0.5">⚠️</span>
+              <div>
+                <p className="font-semibold text-rose-300">Outside Disaster Relief Zone</p>
+                <p className="text-[11px] text-rose-300/80 mt-0.5 leading-relaxed">
+                  Your device is <strong>{distanceToDisaster} km</strong> away from the active disaster area. Submissions and photo reports are restricted to affected zones to ensure rescue bandwidth for those in immediate danger.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* 6 Pictograph Category Grid (3 columns x 2 rows) */}
+          <div className="grid grid-cols-3 gap-3 mb-5">
+            {CATEGORIES.map((cat) => {
+              const isSelected = selectedCategory === cat.id;
+              const IconComp = cat.icon;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  disabled={!isNearDisaster}
+                  onClick={() => setSelectedCategory(cat.id)}
+                  className={`relative flex flex-col items-center justify-center p-3.5 rounded-2xl transition-all duration-200 aspect-[1/0.95] ${
+                    !isNearDisaster 
+                      ? 'opacity-40 cursor-not-allowed bg-[#12141a] border border-zinc-800' 
+                      : isSelected
+                        ? 'bg-zinc-900 border-2 border-emerald-500/80 shadow-[0_0_20px_rgba(16,185,129,0.18)] scale-[1.02]'
+                        : 'bg-[#12141a] border border-zinc-800/90 hover:border-zinc-700 hover:bg-[#181b24]'
+                  }`}
+                >
+                  <div className="mb-2 flex items-center justify-center h-12">
+                    <IconComp />
+                  </div>
+                  <span className={`text-xs font-medium tracking-wide ${isSelected ? 'text-white font-semibold' : 'text-zinc-300'}`}>
+                    {cat.label}
+                  </span>
+                  
+                  {isSelected && (
+                    <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* "Add a photo" Section */}
+          <div className="bg-[#12141a] border border-zinc-800 rounded-2xl p-5 mb-6 text-center flex flex-col items-center justify-center relative">
+            <div className="mb-2">
+              <Icons.Camera />
+            </div>
+            <h3 className="text-base font-bold text-white mb-1">Add a photo</h3>
+            <p className="text-[11px] text-zinc-400 max-w-[260px] leading-tight mb-4">
+              Take a picture of the situation or what you need.
+            </p>
+
+            {/* Hidden native camera / file input */}
+            <input 
+              ref={fileInputRef}
+              type="file" 
+              accept="image/*" 
+              capture="environment"
+              className="hidden"
+              onChange={handlePhotoFileChange}
+              disabled={!isNearDisaster}
+            />
+
+            {/* Photo preview or "Add photo feature" button */}
+            {capturedPhoto ? (
+              <div className="w-full flex items-center justify-between p-2 rounded-xl bg-zinc-900 border border-emerald-500/60">
+                <div className="flex items-center gap-2.5 truncate">
+                  <img src={capturedPhoto} alt="Preview" className="w-10 h-10 rounded-lg object-cover border border-zinc-700" />
+                  <div className="text-left truncate">
+                    <p className="text-xs font-medium text-emerald-400">Photo captured</p>
+                    <p className="text-[10px] text-zinc-400 truncate">{photoFileName || 'Disaster_Site.jpg'}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button 
+                    onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                    className="p-1 text-xs text-zinc-400 hover:text-white"
+                  >
+                    Retake
+                  </button>
+                  <button 
+                    onClick={() => { setCapturedPhoto(null); setPhotoFileName(''); }}
+                    className="p-1 text-xs text-rose-400 hover:text-rose-300 font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={!isNearDisaster}
+                onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                className={`rounded-full px-6 py-2.5 text-xs font-medium transition flex items-center justify-center gap-2 ${
+                  !isNearDisaster 
+                    ? 'bg-zinc-800/50 text-zinc-500 border border-zinc-800 cursor-not-allowed'
+                    : 'bg-[#1a1d26] hover:bg-[#232733] text-zinc-200 border border-zinc-700/80 active:scale-95'
+                }`}
+              >
+                <span>Add photo feature</span>
+              </button>
+            )}
+          </div>
+
+          {/* Action Buttons Section */}
+          <div className="space-y-3 mb-2">
+            {/* Primary Continue / Send Button (White pill button with black text) */}
+            <button
+              type="button"
+              disabled={!isNearDisaster}
+              onClick={onContinue}
+              className={`w-full py-3.5 px-6 rounded-full font-semibold text-sm transition-all flex items-center justify-center gap-2 shadow-lg ${
+                !isNearDisaster
+                  ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                  : 'bg-white text-black hover:bg-zinc-200 active:scale-[0.98]'
+              }`}
+            >
+              <span>
+                {capturedPhoto 
+                  ? `Send Photo Report (${selectedCategory}) →` 
+                  : `Continue with ${selectedCategory} →`}
+              </span>
+            </button>
+
+            {/* Official Login Button */}
+            <button
+              type="button"
+              onClick={onOpenOfficialLogin}
+              className="w-full py-2.5 px-4 rounded-full text-xs font-medium text-zinc-400 hover:text-white bg-[#12141a] hover:bg-zinc-800 border border-zinc-800 transition"
+            >
+              Official Login
+            </button>
+          </div>
+
+          {/* Mobile Home Bar Pill Indicator */}
+          <div className="w-28 h-1 bg-zinc-800 rounded-full mx-auto mt-2"></div>
+        </div>
+      );
+    }
+
+    // ==============================================================================
+    // COMPONENT: REQUEST CONFIRMATION PAGE
+    // ==============================================================================
+    function RequestConfirmPage({ category, userLocation, capturedPhoto, onBack, onSubmit }) {
+      const [peopleCount, setPeopleCount] = useState(1);
+      const [urgency, setUrgency] = useState('high');
+      const [notes, setNotes] = useState('');
+      const [submitting, setSubmitting] = useState(false);
+      const mapContainerRef = useRef(null);
+
+      // Initialize Leaflet Mini-Map for user location verification
+      useEffect(() => {
+        if (!mapContainerRef.current || !window.L) return;
+
+        const lat = userLocation ? userLocation.lat : 28.6139;
+        const lng = userLocation ? userLocation.lng : 77.2090;
+
+        const map = L.map(mapContainerRef.current, {
+          zoomControl: false,
+          attributionControl: false
+        }).setView([lat, lng], 15);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+        }).addTo(map);
+
+        // Marker for user emergency location
+        const customPin = L.divIcon({
+          className: 'custom-pin',
+          html: `<div style="background-color:#ef4444; width:16px; height:16px; border-radius:50%; border:3px solid #fff; box-shadow:0 0 10px rgba(239,68,68,0.8);"></div>`,
+          iconSize: [16, 16],
+          iconAnchor: [8, 8]
+        });
+
+        L.marker([lat, lng], { icon: customPin }).addTo(map)
+          .bindPopup(`<b>Your Emergency Beacon</b><br>${category} Needed`).openPopup();
+
+        return () => map.remove();
+      }, [userLocation, category]);
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setSubmitting(true);
+        await onSubmit({ peopleCount, urgency, notes });
+      };
+
+      return (
+        <div className="flex-1 flex flex-col justify-between p-5 text-white">
+          <div>
+            {/* Header with Back button */}
+            <div className="flex items-center justify-between mb-4">
+              <button 
+                onClick={onBack}
+                className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white"
+              >
+                <span>←</span> Back
+              </button>
+              <span className="text-xs font-mono text-zinc-500">Step 2 of 2</span>
+            </div>
+
+            {/* Selected category overview */}
+            <div className="p-4 rounded-2xl bg-[#12141a] border border-zinc-800 flex items-center justify-between mb-4">
+              <div>
+                <p className="text-[11px] text-zinc-400">Requesting Assistance for</p>
+                <h2 className="text-xl font-bold text-white mt-0.5">{category}</h2>
+                <span className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800">
+                  Priority Dispatch
+                </span>
+              </div>
+              <div className="w-12 h-12 flex items-center justify-center">
+                {category === 'Food' && <Icons.Food />}
+                {category === 'Water' && <Icons.Water />}
+                {category === 'Medicine' && <Icons.Medicine />}
+                {category === 'Rescue' && <Icons.Rescue />}
+                {category === 'Shelter' && <Icons.Shelter />}
+                {category === 'Other' && <Icons.SOS />}
+              </div>
+            </div>
+
+            {/* Leaflet GPS Map Container */}
+            <div className="rounded-2xl overflow-hidden border border-zinc-800 mb-4 bg-zinc-900">
+              <div className="p-2.5 bg-zinc-900/90 border-b border-zinc-800 flex items-center justify-between text-[11px]">
+                <span className="text-zinc-300 font-medium">📍 Device GPS Verification</span>
+                <span className="text-emerald-400 font-mono text-[10px]">
+                  {userLocation ? `${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}` : 'Detecting GPS...'}
+                </span>
+              </div>
+              <div ref={mapContainerRef} className="h-32 w-full"></div>
+            </div>
+
+            {/* Quick Details Form */}
+            <form onSubmit={handleSubmit} className="space-y-3.5">
+              {/* Number of People */}
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">Number of people needing assistance</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {[1, 2, 4, '5+'].map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => setPeopleCount(num === '5+' ? 6 : num)}
+                      className={`py-2 rounded-xl text-xs font-semibold transition ${
+                        (num === '5+' && peopleCount >= 5) || peopleCount === num
+                          ? 'bg-white text-black'
+                          : 'bg-[#12141a] text-zinc-300 border border-zinc-800 hover:border-zinc-700'
+                      }`}
+                    >
+                      {num} {num === 1 ? 'person' : 'people'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Urgency Level */}
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">Urgency Level</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'critical', label: 'Critical', color: 'border-rose-500 text-rose-400' },
+                    { id: 'high', label: 'High Priority', color: 'border-amber-500 text-amber-400' },
+                    { id: 'medium', label: 'Standard', color: 'border-blue-500 text-blue-400' }
+                  ].map((lvl) => (
+                    <button
+                      key={lvl.id}
+                      type="button"
+                      onClick={() => setUrgency(lvl.id)}
+                      className={`py-2 px-2 rounded-xl text-xs font-semibold border transition ${
+                        urgency === lvl.id
+                          ? 'bg-zinc-800 ' + lvl.color + ' ring-1'
+                          : 'bg-[#12141a] border-zinc-800 text-zinc-400'
+                      }`}
+                    >
+                      {lvl.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Notes / Landmark Details */}
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">Emergency Note / Landmark (Optional)</label>
+                <textarea
+                  rows="2"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="e.g. Near blue water tower, elderly person trapped on 2nd floor terrace..."
+                  className="w-full bg-[#12141a] border border-zinc-800 rounded-xl p-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                ></textarea>
+              </div>
+
+              {/* Attached Photo indicator if present */}
+              {capturedPhoto && (
+                <div className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center gap-2">
+                  <img src={capturedPhoto} alt="Photo" className="w-8 h-8 rounded object-cover" />
+                  <span className="text-xs text-zinc-300 truncate">Photo will be attached to beacon</span>
+                </div>
+              )}
+
+              {/* Submit Button */}
+              <button
+                type="submit"
+                disabled={submitting}
+                className="w-full mt-4 py-3.5 px-6 rounded-full font-bold text-sm bg-white text-black hover:bg-zinc-200 transition active:scale-[0.98] shadow-lg flex items-center justify-center gap-2"
+              >
+                {submitting ? 'Transmitting Beacon...' : 'Confirm & Send Request →'}
+              </button>
+            </form>
+          </div>
+          
+          <div className="w-28 h-1 bg-zinc-800 rounded-full mx-auto mt-4"></div>
+        </div>
+      );
+    }
+
+    // ==============================================================================
+    // COMPONENT: PHOTO REPORT SUBMISSION PAGE
+    // ==============================================================================
+    function PhotoConfirmPage({ photo, userLocation, category, onBack, onSubmit }) {
+      const [notes, setNotes] = useState('');
+      const [submitting, setSubmitting] = useState(false);
+
+      const handleSend = async () => {
+        setSubmitting(true);
+        await onSubmit(notes);
+      };
+
+      return (
+        <div className="flex-1 flex flex-col justify-between p-5 text-white">
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <button onClick={onBack} className="text-xs text-zinc-400 hover:text-white">← Back</button>
+              <span className="text-xs text-zinc-500">Visual Incident Report</span>
+            </div>
+
+            <h2 className="text-xl font-bold mb-1">Verify Disaster Photo</h2>
+            <p className="text-xs text-zinc-400 mb-4">Review photo before sending to emergency relief units.</p>
+
+            {/* Photo Preview Container */}
+            <div className="rounded-2xl overflow-hidden border border-zinc-800 bg-zinc-900 mb-4 relative">
+              <img src={photo} alt="Disaster situation" className="w-full max-h-72 object-cover" />
+              <div className="absolute bottom-2 left-2 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-md text-[10px] text-zinc-300 font-mono">
+                📍 {userLocation ? `${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}` : 'GPS Tagged'}
+              </div>
+            </div>
+
+            {/* Description / Caption */}
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1">Situation Description</label>
+                <textarea
+                  rows="2"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Describe trapped people, blocked road, or required equipment..."
+                  className="w-full bg-[#12141a] border border-zinc-800 rounded-xl p-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                ></textarea>
+              </div>
+
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={handleSend}
+                className="w-full py-3.5 px-6 rounded-full font-bold text-sm bg-white text-black hover:bg-zinc-200 transition active:scale-[0.98] shadow-lg"
+              >
+                {submitting ? 'Transmitting Photo...' : 'Send Photo Report →'}
+              </button>
+            </div>
+          </div>
+
+          <div className="w-28 h-1 bg-zinc-800 rounded-full mx-auto mt-4"></div>
+        </div>
+      );
+    }
+
+    // ==============================================================================
+    // COMPONENT: SUCCESS & AUTO-REDIRECT PAGE
+    // ==============================================================================
+    function SuccessPage({ message, beaconId, onRedirectHome }) {
+      const [countdown, setCountdown] = useState(3);
+
+      useEffect(() => {
+        const timer = setInterval(() => {
+          setCountdown((prev) => {
+            if (prev <= 1) {
+              clearInterval(timer);
+              onRedirectHome();
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+
+        return () => clearInterval(timer);
+      }, [onRedirectHome]);
+
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-white">
+          {/* Animated Success Badge */}
+          <div className="w-20 h-20 rounded-full bg-emerald-500/20 border-2 border-emerald-500 flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(16,185,129,0.3)] animate-bounce">
+            <svg className="w-10 h-10 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+
+          <h2 className="text-xl font-bold tracking-tight text-white mb-2">
+            {message}
+          </h2>
+
+          <p className="text-xs text-zinc-400 max-w-xs mb-6">
+            Your emergency beacon is recorded in the dispatch registry. Local field rescue teams have been alerted.
+          </p>
+
+          {beaconId && (
+            <div className="bg-[#12141a] border border-zinc-800 rounded-xl px-4 py-2.5 mb-8">
+              <span className="text-[10px] text-zinc-400 block uppercase tracking-wider">Emergency Beacon ID</span>
+              <span className="text-base font-mono font-bold text-emerald-400">{beaconId}</span>
+            </div>
+          )}
+
+          {/* Countdown timer pill */}
+          <div className="text-xs text-zinc-400 flex items-center gap-2">
+            <span className="inline-block w-4 h-4 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin"></span>
+            <span>Returning to homepage in <strong className="text-white">{countdown}</strong> seconds...</span>
+          </div>
+
+          <button
+            onClick={onRedirectHome}
+            className="mt-6 text-xs text-zinc-400 underline hover:text-white"
+          >
+            Return immediately
+          </button>
+        </div>
+      );
+    }
+
+    // ==============================================================================
+    // COMPONENT: OFFICIAL LOGIN MODAL (Password: 1234)
+    // ==============================================================================
+    function OfficialLoginModal({ onSuccess, onClose }) {
+      const [password, setPassword] = useState('');
+      const [error, setError] = useState('');
+
+      const handleLogin = (e) => {
+        e.preventDefault();
+        // Official login requires password 1234
+        if (password.trim() === '1234') {
+          setError('');
+          onSuccess();
+        } else {
+          setError('Invalid passkey. For official access enter: 1234');
+        }
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-xs bg-[#12141a] border border-zinc-800 rounded-2xl p-6 shadow-2xl text-center">
+            
+            <div className="w-12 h-12 rounded-xl bg-zinc-900 border border-zinc-700 mx-auto mb-4 flex items-center justify-center">
+              <svg className="w-6 h-6 text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" 
+                      d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </div>
+
+            <h3 className="text-base font-bold text-white mb-1">Official Dispatch Login</h3>
+            <p className="text-xs text-zinc-400 mb-4">Enter authorization passkey to access emergency operations.</p>
+
+            <form onSubmit={handleLogin} className="space-y-3">
+              <input
+                type="password"
+                autoFocus
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password (1234)"
+                className="w-full bg-[#181b24] border border-zinc-700 rounded-xl px-4 py-2.5 text-center text-sm text-white placeholder-zinc-500 tracking-widest focus:outline-none focus:border-zinc-500 font-mono"
+              />
+
+              {error && (
+                <p className="text-[11px] text-rose-400 leading-tight">{error}</p>
+              )}
+
+              <button
+                type="submit"
+                className="w-full py-2.5 rounded-full font-semibold text-xs bg-white text-black hover:bg-zinc-200 transition"
+              >
+                Authorize Entry
+              </button>
+
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full text-xs text-zinc-400 hover:text-white pt-1"
+              >
+                Cancel
+              </button>
+            </form>
+
+            <div className="mt-4 pt-3 border-t border-zinc-800/80">
+              <span className="text-[10px] text-zinc-500 font-mono">Demo Passkey: 1234</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ==============================================================================
+    // COMPONENT: OFFICIAL DASHBOARD (Leaflet Map + Requests Table + Photo Feed)
+    // ==============================================================================
+    function OfficialDashboard({ 
+      requests, 
+      disasterZone, 
+      setDisasterZone, 
+      supabaseConfig,
+      setSupabaseConfig,
+      onUpdateRequestStatus, 
+      onLogout 
+    }) {
+      const [activeTab, setActiveTab] = useState('map'); // 'map' | 'list' | 'photos' | 'settings'
+      const [filterCategory, setFilterCategory] = useState('all');
+      const [filterStatus, setFilterStatus] = useState('all');
+      const [selectedPhotoModal, setSelectedPhotoModal] = useState(null);
+      const dashboardMapRef = useRef(null);
+      const mapInstanceRef = useRef(null);
+
+      // Initialize & update Leaflet Map on dashboard
+      useEffect(() => {
+        if (activeTab !== 'map' || !dashboardMapRef.current || !window.L) return;
+
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.remove();
+        }
+
+        const map = L.map(dashboardMapRef.current).setView([disasterZone.lat, disasterZone.lng], 13);
+        mapInstanceRef.current = map;
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '© OpenStreetMap'
+        }).addTo(map);
+
+        // Disaster Perimeter Circle
+        const zoneCircle = L.circle([disasterZone.lat, disasterZone.lng], {
+          color: '#ef4444',
+          fillColor: '#f87171',
+          fillOpacity: 0.15,
+          radius: disasterZone.radiusKm * 1000 // meters
+        }).addTo(map);
+        zoneCircle.bindPopup(`<b>${disasterZone.name}</b><br>Radius: ${disasterZone.radiusKm} km`);
+
+        // Plot All User Requests as custom pins
+        requests.forEach((req) => {
+          let pinColor = '#3b82f6';
+          if (req.category === 'rescue' || req.urgency === 'critical') pinColor = '#ef4444';
+          else if (req.category === 'food') pinColor = '#f59e0b';
+          else if (req.category === 'water') pinColor = '#06b6d4';
+          else if (req.category === 'medicine') pinColor = '#38bdf8';
+          else if (req.category === 'shelter') pinColor = '#f97316';
+          else if (req.photo_url) pinColor = '#10b981';
+
+          const markerHtml = `
+            <div style="background:${pinColor}; width:20px; height:20px; border-radius:50%; border:2.5px solid #fff; box-shadow:0 0 8px rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; color:#fff; font-size:10px; font-weight:bold;">
+            </div>
+          `;
+
+          const icon = L.divIcon({
+            className: 'disp-pin',
+            html: markerHtml,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10]
+          });
+
+          const popupContent = `
+            <div style="font-size:12px; line-height:1.4;">
+              <strong style="text-transform:uppercase; color:#f87171;">${req.category} Assistance</strong><br/>
+              <b>Status:</b> ${req.status}<br/>
+              <b>People:</b> ${req.people_count || 1}<br/>
+              <b>Note:</b> ${req.notes || 'None'}<br/>
+              ${req.photo_url ? `<img src="${req.photo_url}" style="width:100%; max-height:80px; object-fit:cover; margin-top:4px; border-radius:4px;"/>` : ''}
+              <div style="margin-top:6px; font-size:10px; color:#94a3b8;">
+                Lat: ${Number(req.latitude).toFixed(4)}, Lng: ${Number(req.longitude).toFixed(4)}
+              </div>
+            </div>
+          `;
+
+          L.marker([req.latitude, req.longitude], { icon })
+            .addTo(map)
+            .bindPopup(popupContent);
+        });
+
+        return () => {
+          if (mapInstanceRef.current) {
+            mapInstanceRef.current.remove();
+            mapInstanceRef.current = null;
+          }
+        };
+      }, [activeTab, requests, disasterZone]);
+
+      // Filtered requests
+      const filteredRequests = requests.filter(r => {
+        if (filterCategory !== 'all' && r.category !== filterCategory) return false;
+        if (filterStatus !== 'all' && r.status !== filterStatus) return false;
+        return true;
+      });
+
+      return (
+        <div className="flex-1 flex flex-col bg-[#0a0b0e] text-white">
+          
+          {/* Dashboard Header */}
+          <div className="bg-[#12141a] px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                <h1 className="text-sm font-bold tracking-tight">Official Operations Center</h1>
+              </div>
+              <p className="text-[10px] text-zinc-400">DisplaceOS Dispatch System</p>
+            </div>
+            <button
+              onClick={onLogout}
+              className="text-xs px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium"
+            >
+              Exit
+            </button>
+          </div>
+
+          {/* Quick Metrics */}
+          <div className="grid grid-cols-4 gap-1.5 p-3 bg-zinc-900/60 border-b border-zinc-800 text-center">
+            <div className="p-2 rounded-lg bg-[#12141a] border border-zinc-800">
+              <span className="text-[10px] text-zinc-400 block">Total</span>
+              <span className="text-base font-bold text-white">{requests.length}</span>
+            </div>
+            <div className="p-2 rounded-lg bg-[#12141a] border border-zinc-800">
+              <span className="text-[10px] text-amber-400 block">Pending</span>
+              <span className="text-base font-bold text-amber-400">
+                {requests.filter(r => r.status === 'pending').length}
+              </span>
+            </div>
+            <div className="p-2 rounded-lg bg-[#12141a] border border-zinc-800">
+              <span className="text-[10px] text-rose-400 block">Critical</span>
+              <span className="text-base font-bold text-rose-400">
+                {requests.filter(r => r.urgency === 'critical').length}
+              </span>
+            </div>
+            <div className="p-2 rounded-lg bg-[#12141a] border border-zinc-800">
+              <span className="text-[10px] text-emerald-400 block">Photos</span>
+              <span className="text-base font-bold text-emerald-400">
+                {requests.filter(r => r.photo_url).length}
+              </span>
+            </div>
+          </div>
+
+          {/* Navigation Tabs */}
+          <div className="flex border-b border-zinc-800 bg-[#12141a] text-xs">
+            <button
+              onClick={() => setActiveTab('map')}
+              className={`flex-1 py-2.5 font-medium border-b-2 transition ${
+                activeTab === 'map' ? 'border-white text-white' : 'border-transparent text-zinc-400'
+              }`}
+            >
+              🗺️ Live Map
+            </button>
+            <button
+              onClick={() => setActiveTab('list')}
+              className={`flex-1 py-2.5 font-medium border-b-2 transition ${
+                activeTab === 'list' ? 'border-white text-white' : 'border-transparent text-zinc-400'
+              }`}
+            >
+              📋 Queue ({requests.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('photos')}
+              className={`flex-1 py-2.5 font-medium border-b-2 transition ${
+                activeTab === 'photos' ? 'border-white text-white' : 'border-transparent text-zinc-400'
+              }`}
+            >
+              📷 Photos ({requests.filter(r => r.photo_url).length})
+            </button>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`flex-1 py-2.5 font-medium border-b-2 transition ${
+                activeTab === 'settings' ? 'border-white text-white' : 'border-transparent text-zinc-400'
+              }`}
+            >
+              ⚙️ Geofence
+            </button>
+          </div>
+
+          {/* TAB 1: LIVE MAP */}
+          {activeTab === 'map' && (
+            <div className="flex-1 flex flex-col relative">
+              <div ref={dashboardMapRef} className="flex-1 w-full min-h-[420px]"></div>
+              <div className="p-2.5 bg-[#12141a] border-t border-zinc-800 text-[11px] text-zinc-400 flex items-center justify-between">
+                <span>🔴 Disaster Zone: {disasterZone.radiusKm} km radius</span>
+                <span>Click markers to view requests & dispatch</span>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: REQUESTS QUEUE */}
+          {activeTab === 'list' && (
+            <div className="flex-1 p-3 overflow-y-auto custom-scroll space-y-2.5">
+              {/* Category Filter Pills */}
+              <div className="flex gap-1.5 overflow-x-auto pb-1 text-[11px]">
+                {['all', 'food', 'water', 'medicine', 'rescue', 'shelter', 'other'].map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => setFilterCategory(cat)}
+                    className={`px-2.5 py-1 rounded-full whitespace-nowrap transition ${
+                      filterCategory === cat ? 'bg-white text-black font-semibold' : 'bg-zinc-800 text-zinc-400'
+                    }`}
+                  >
+                    {cat.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+
+              {filteredRequests.length === 0 ? (
+                <div className="p-8 text-center text-zinc-500 text-xs">
+                  No requests matching selected filters.
+                </div>
+              ) : (
+                filteredRequests.map(req => (
+                  <div key={req.id} className="p-3.5 rounded-xl bg-[#12141a] border border-zinc-800 text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                          req.urgency === 'critical' ? 'bg-rose-950 text-rose-300 border border-rose-800' : 'bg-zinc-800 text-zinc-300'
+                        }`}>
+                          {req.category}
+                        </span>
+                        <span className="font-mono text-zinc-400">{req.id}</span>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                        req.status === 'dispatched' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' :
+                        req.status === 'resolved' ? 'bg-blue-950 text-blue-400 border border-blue-800' :
+                        'bg-amber-950 text-amber-400 border border-amber-800'
+                      }`}>
+                        {req.status.toUpperCase()}
+                      </span>
+                    </div>
+
+                    <p className="text-zinc-200 text-xs">{req.notes}</p>
+
+                    <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-1 border-t border-zinc-800/80">
+                      <span>👥 {req.people_count || 1} people in need</span>
+                      <span className="font-mono">{Number(req.latitude).toFixed(4)}, {Number(req.longitude).toFixed(4)}</span>
+                    </div>
+
+                    {req.photo_url && (
+                      <button 
+                        onClick={() => setSelectedPhotoModal(req.photo_url)}
+                        className="w-full flex items-center gap-2 p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300 hover:text-white"
+                      >
+                        <img src={req.photo_url} alt="Site" className="w-8 h-8 rounded object-cover" />
+                        <span>Click to view attached incident photo</span>
+                      </button>
+                    )}
+
+                    {/* Dispatch Action buttons */}
+                    <div className="flex gap-2 pt-1">
+                      {req.status === 'pending' && (
+                        <button
+                          onClick={() => onUpdateRequestStatus(req.id, 'dispatched')}
+                          className="flex-1 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-[11px]"
+                        >
+                          Dispatch Team
+                        </button>
+                      )}
+                      {req.status === 'dispatched' && (
+                        <button
+                          onClick={() => onUpdateRequestStatus(req.id, 'resolved')}
+                          className="flex-1 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-[11px]"
+                        >
+                          Mark Resolved
+                        </button>
+                      )}
+                      {req.status === 'resolved' && (
+                        <span className="text-[11px] text-zinc-500 italic">Incident resolved</span>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* TAB 3: PHOTO INCIDENT GALLERY */}
+          {activeTab === 'photos' && (
+            <div className="flex-1 p-3 overflow-y-auto custom-scroll">
+              <div className="grid grid-cols-2 gap-2.5">
+                {requests.filter(r => r.photo_url).length === 0 ? (
+                  <div className="col-span-2 p-8 text-center text-zinc-500 text-xs">
+                    No photo reports submitted yet.
+                  </div>
+                ) : (
+                  requests.filter(r => r.photo_url).map(req => (
+                    <div 
+                      key={req.id} 
+                      onClick={() => setSelectedPhotoModal(req.photo_url)}
+                      className="group rounded-xl overflow-hidden bg-[#12141a] border border-zinc-800 cursor-pointer hover:border-zinc-600 transition"
+                    >
+                      <img src={req.photo_url} alt="Report" className="w-full h-28 object-cover group-hover:scale-105 transition" />
+                      <div className="p-2 text-[10px]">
+                        <span className="font-bold uppercase text-emerald-400 block">{req.category}</span>
+                        <p className="text-zinc-400 truncate">{req.notes || 'Visual record'}</p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: GEOFENCE & SUPABASE SETTINGS */}
+          {activeTab === 'settings' && (
+            <div className="flex-1 p-4 overflow-y-auto custom-scroll space-y-4 text-xs">
+              <div className="p-4 rounded-xl bg-[#12141a] border border-zinc-800 space-y-3">
+                <h3 className="font-bold text-white text-sm">Disaster Geofence Configuration</h3>
+                <p className="text-zinc-400 text-[11px]">
+                  Adjust the epicenter and allowed radius. Any citizen outside this perimeter will have photo uploads and requests restricted.
+                </p>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-zinc-400 block mb-1">Center Latitude</label>
+                    <input 
+                      type="number" 
+                      step="0.0001"
+                      value={disasterZone.lat}
+                      onChange={(e) => setDisasterZone({ ...disasterZone, lat: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded p-1.5 font-mono text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-zinc-400 block mb-1">Center Longitude</label>
+                    <input 
+                      type="number" 
+                      step="0.0001"
+                      value={disasterZone.lng}
+                      onChange={(e) => setDisasterZone({ ...disasterZone, lng: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded p-1.5 font-mono text-white"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-zinc-400 block mb-1">Allowed Radius: {disasterZone.radiusKm} km</label>
+                  <input 
+                    type="range" 
+                    min="1" 
+                    max="100" 
+                    value={disasterZone.radiusKm}
+                    onChange={(e) => setDisasterZone({ ...disasterZone, radiusKm: parseFloat(e.target.value) })}
+                    className="w-full"
+                  />
+                </div>
+              </div>
+
+              {/* Supabase Connection */}
+              <div className="p-4 rounded-xl bg-[#12141a] border border-zinc-800 space-y-3">
+                <h3 className="font-bold text-white text-sm">Supabase Database Connection</h3>
+                <p className="text-zinc-400 text-[11px]">
+                  Provide your Supabase Project URL and Anon Public Key to sync directly with PostgreSQL cloud tables.
+                </p>
+
+                <div>
+                  <label className="text-zinc-400 block mb-1">Supabase URL</label>
+                  <input 
+                    type="text"
+                    placeholder="https://xyzcompany.supabase.co"
+                    value={supabaseConfig.url}
+                    onChange={(e) => {
+                      const updated = { ...supabaseConfig, url: e.target.value };
+                      setSupabaseConfig(updated);
+                      localStorage.setItem('displace_sb_url', e.target.value);
+                    }}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded p-1.5 text-xs text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-zinc-400 block mb-1">Supabase Anon Key</label>
+                  <input 
+                    type="password"
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    value={supabaseConfig.key}
+                    onChange={(e) => {
+                      const updated = { ...supabaseConfig, key: e.target.value };
+                      setSupabaseConfig(updated);
+                      localStorage.setItem('displace_sb_key', e.target.value);
+                    }}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded p-1.5 text-xs text-white"
+                  />
+                </div>
+
+                <div className="pt-2 text-[10px] text-zinc-500 font-mono">
+                  Schema script: `supabase_schema.sql` included in root folder.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Full Screen Image Lightbox Modal */}
+          {selectedPhotoModal && (
+            <div 
+              onClick={() => setSelectedPhotoModal(null)}
+              className="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex flex-col items-center justify-center p-4"
+            >
+              <div className="relative max-w-sm w-full">
+                <button 
+                  onClick={() => setSelectedPhotoModal(null)}
+                  className="absolute -top-10 right-0 text-white font-bold text-lg bg-zinc-800 w-8 h-8 rounded-full flex items-center justify-center"
+                >
+                  ✕
+                </button>
+                <img src={selectedPhotoModal} alt="Incident view" className="w-full rounded-2xl shadow-2xl border border-zinc-700" />
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Mount React App
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
+
