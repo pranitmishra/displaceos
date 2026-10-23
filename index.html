@@ -1251,7 +1251,7 @@
             <div style="font-size:12px; line-height:1.4;">
               <strong style="text-transform:uppercase; color:#f87171;">${req.category} Assistance</strong><br/>
               <b>Status:</b> ${req.status}<br/>
-              <b>People:</b> ${(req.people_count === '5+' || req.people_count >= 5 || req.people_count === 6) ? '5+' : (req.people_count || 1)}<br/>
+              <b>People:</b> ${req.people_count || 1}<br/>
               <b>Note:</b> ${req.notes || 'None'}<br/>
               ${req.photo_url ? `<img src="${req.photo_url}" style="width:100%; max-height:80px; object-fit:cover; margin-top:4px; border-radius:4px;"/>` : ''}
               <div style="margin-top:6px; font-size:10px; color:#94a3b8;">
@@ -1451,7 +1451,7 @@
                     <p className="text-zinc-200 text-xs">{req.notes}</p>
 
                     <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-1 border-t border-zinc-800/80">
-                      <span>👥 {(req.people_count === '5+' || req.people_count >= 5 || req.people_count === 6) ? '5+' : (req.people_count || 1)} people in need</span>
+                      <span>{req.people_count || 1} people in need</span>
                       <span className="font-mono">{Number(req.latitude).toFixed(4)}, {Number(req.longitude).toFixed(4)}</span>
                     </div>
 
@@ -1492,7 +1492,7 @@
                             className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-medium text-[11px] flex items-center gap-1 transition shadow"
                             title="Delete resolved case"
                           >
-                            🗑️ Delete Request
+                            Delete Request
                           </button>
                         </div>
                       )}
