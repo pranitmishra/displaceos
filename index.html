@@ -84,9 +84,9 @@
     // DEFAULT CONFIGURATION & DISASTER ZONE
     // ==============================================================================
     const INITIAL_DISASTER_ZONE = {
-      name: "Flood & Disaster Impact Zone Alpha",
-      lat: 28.6139,  // Default reference coordinates
-      lng: 77.2090,
+      name: "Disaster Operations Area Alpha",
+      lat: 29.3878,  // Default reference coordinates
+      lng: 79.5408,
       radiusKm: 25.0 // Active perimeter radius in km
     };
 
@@ -269,7 +269,13 @@
       // Geolocation & Disaster Geofencing state
       const [userLocation, setUserLocation] = useState(null); // { lat, lng }
       const [locationStatus, setLocationStatus] = useState('prompt'); // 'prompt' | 'granted' | 'denied' | 'error'
-      const [disasterZone, setDisasterZone] = useState(INITIAL_DISASTER_ZONE);
+      const [disasterZone, setDisasterZone] = useState(() => {
+        try {
+          const saved = localStorage.getItem('displace_disaster_zone');
+          if (saved) return JSON.parse(saved);
+        } catch(e) {}
+        return INITIAL_DISASTER_ZONE;
+      });
       const [isNearDisaster, setIsNearDisaster] = useState(true);
       const [distanceToDisaster, setDistanceToDisaster] = useState(1.4);
       const [isSimulatedOutside, setIsSimulatedOutside] = useState(false);
@@ -286,7 +292,7 @@
         };
       });
 
-      // 1. Initial Load: Auto-request Location permission
+      // 1. Initial Load: Auto-request Location permission & clean old fake requests
       useEffect(() => {
         requestUserLocation();
         loadExistingRequests();
@@ -314,8 +320,7 @@
       const requestUserLocation = () => {
         if (!navigator.geolocation) {
           setLocationStatus('denied');
-          // Fallback location near disaster center for demonstration
-          setUserLocation({ lat: disasterZone.lat + 0.015, lng: disasterZone.lng + 0.012 });
+          setUserLocation({ lat: disasterZone.lat, lng: disasterZone.lng });
           return;
         }
 
@@ -327,75 +332,51 @@
             };
             setUserLocation(loc);
             setLocationStatus('granted');
-            
-            // Adjust disaster zone epicenter near the user by default so user can test inside zone immediately
-            setDisasterZone(prev => ({
-              ...prev,
-              lat: Number((loc.lat + 0.012).toFixed(6)),
-              lng: Number((loc.lng + 0.010).toFixed(6))
-            }));
           },
           (err) => {
             console.warn("Geolocation denied or unavailable:", err.message);
             setLocationStatus('denied');
-            // Provide simulated active position near disaster zone
-            setUserLocation({ lat: disasterZone.lat + 0.015, lng: disasterZone.lng + 0.012 });
+            setUserLocation({ lat: disasterZone.lat, lng: disasterZone.lng });
           },
           { enableHighAccuracy: true, timeout: 8000 }
         );
       };
 
-      // Load requests from Supabase / localStorage
+      // Load requests from Supabase / localStorage (Purging all fake mock requests)
       const loadExistingRequests = async () => {
         try {
           const cached = localStorage.getItem('displace_requests');
           if (cached) {
-            setRequestsList(JSON.parse(cached));
+            let parsed = JSON.parse(cached);
+            // Remove any legacy fake/seed requests (id starting with 'req-')
+            parsed = parsed.filter(r => r.id && !r.id.startsWith('req-'));
+            localStorage.setItem('displace_requests', JSON.stringify(parsed));
+            setRequestsList(parsed);
           } else {
-            // Seed initial mock requests for official dashboard preview
-            const seed = [
-              {
-                id: 'req-' + Math.random().toString(36).substr(2, 6),
-                category: 'rescue',
-                latitude: disasterZone.lat + 0.011,
-                longitude: disasterZone.lng + 0.008,
-                notes: 'Elderly residents trapped due to high water level',
-                people_count: 4,
-                urgency: 'critical',
-                status: 'pending',
-                created_at: new Date(Date.now() - 15 * 60000).toISOString(),
-                photo_url: null
-              },
-              {
-                id: 'req-' + Math.random().toString(36).substr(2, 6),
-                category: 'food',
-                latitude: disasterZone.lat - 0.008,
-                longitude: disasterZone.lng + 0.014,
-                notes: 'Need dry rations and clean infant formula',
-                people_count: 5,
-                urgency: 'high',
-                status: 'dispatched',
-                created_at: new Date(Date.now() - 45 * 60000).toISOString(),
-                photo_url: null
-              },
-              {
-                id: 'req-' + Math.random().toString(36).substr(2, 6),
-                category: 'medicine',
-                latitude: disasterZone.lat + 0.004,
-                longitude: disasterZone.lng - 0.012,
-                notes: 'Asthma inhaler and first aid supplies needed',
-                people_count: 2,
-                urgency: 'critical',
-                status: 'in_progress',
-                created_at: new Date(Date.now() - 70 * 60000).toISOString(),
-                photo_url: null
-              }
-            ];
-            setRequestsList(seed);
-            localStorage.setItem('displace_requests', JSON.stringify(seed));
+            setRequestsList([]);
+            localStorage.setItem('displace_requests', JSON.stringify([]));
           }
         } catch (e) {
           console.error(e);
+          setRequestsList([]);
+        }
+      };
+
+      // Delete request permanently (used after resolving)
+      const handleDeleteRequest = async (reqId) => {
+        if (!confirm("Are you sure you want to permanently delete this resolved request?")) return;
+        const updated = requestsList.filter(r => r.id !== reqId);
+        setRequestsList(updated);
+        localStorage.setItem('displace_requests', JSON.stringify(updated));
+
+        // Also delete from Supabase if connected
+        if (supabaseConfig.url && supabaseConfig.key && window.supabase) {
+          try {
+            const sb = window.supabase.createClient(supabaseConfig.url, supabaseConfig.key);
+            await sb.from('relief_requests').delete().eq('id', reqId);
+          } catch (sbErr) {
+            console.warn("Supabase delete note:", sbErr);
+          }
         }
       };
 
@@ -414,6 +395,12 @@
 
       // Submit Request (from Request Confirm Page or Photo Confirm Page)
       const submitReliefRequest = async ({ category, notes, peopleCount, urgency, photo }) => {
+        // Enforce Geofence: if outside radius, strictly block submission!
+        if (!isNearDisaster) {
+          alert(`Submission Blocked: You are located ${distanceToDisaster} km away, which is outside the active disaster radius (${disasterZone.radiusKm} km). Requests are restricted to affected zones.`);
+          return null;
+        }
+
         const beaconId = 'DISP-' + Math.floor(1000 + Math.random() * 9000);
         setLastBeaconId(beaconId);
 
@@ -574,11 +561,18 @@
               setDisasterZone={setDisasterZone}
               supabaseConfig={supabaseConfig}
               setSupabaseConfig={setSupabaseConfig}
-              onUpdateRequestStatus={(reqId, newStatus) => {
+              onUpdateRequestStatus={async (reqId, newStatus) => {
                 const updated = requestsList.map(r => r.id === reqId ? { ...r, status: newStatus } : r);
                 setRequestsList(updated);
                 localStorage.setItem('displace_requests', JSON.stringify(updated));
+                if (supabaseConfig.url && supabaseConfig.key && window.supabase) {
+                  try {
+                    const sb = window.supabase.createClient(supabaseConfig.url, supabaseConfig.key);
+                    await sb.from('relief_requests').update({ status: newStatus }).eq('id', reqId);
+                  } catch (e) {}
+                }
               }}
+              onDeleteRequest={handleDeleteRequest}
               onLogout={() => {
                 setIsOfficialAuthenticated(false);
                 setCurrentPage('home');
@@ -750,17 +744,25 @@
             <button
               type="button"
               disabled={!isNearDisaster}
-              onClick={onContinue}
+              onClick={() => {
+                if (!isNearDisaster) {
+                  alert(`Submission Blocked: You are outside the active disaster radius (${distanceToDisaster} km away). Submissions are strictly restricted to victims inside the ${disasterZone.radiusKm} km perimeter.`);
+                  return;
+                }
+                onContinue();
+              }}
               className={`w-full py-3.5 px-6 rounded-full font-semibold text-sm transition-all flex items-center justify-center gap-2 shadow-lg ${
                 !isNearDisaster
-                  ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                  ? 'bg-zinc-850 text-zinc-500 border border-zinc-700/40 cursor-not-allowed opacity-75'
                   : 'bg-white text-black hover:bg-zinc-200 active:scale-[0.98]'
               }`}
             >
               <span>
-                {capturedPhoto 
-                  ? `Send Photo Report (${selectedCategory}) →` 
-                  : `Continue with ${selectedCategory} →`}
+                {!isNearDisaster 
+                  ? `Submission Blocked (Outside ${disasterZone.radiusKm} km Radius)` 
+                  : (capturedPhoto 
+                      ? `Send Photo Report (${selectedCategory}) →` 
+                      : `Continue with ${selectedCategory} →`)}
               </span>
             </button>
 
@@ -882,14 +884,14 @@
                     <button
                       key={num}
                       type="button"
-                      onClick={() => setPeopleCount(num === '5+' ? 6 : num)}
+                      onClick={() => setPeopleCount(num)}
                       className={`py-2 rounded-xl text-xs font-semibold transition ${
-                        (num === '5+' && peopleCount >= 5) || peopleCount === num
-                          ? 'bg-white text-black'
+                        peopleCount === num
+                          ? 'bg-white text-black font-bold'
                           : 'bg-[#12141a] text-zinc-300 border border-zinc-800 hover:border-zinc-700'
                       }`}
                     >
-                      {num} {num === 1 ? 'person' : 'people'}
+                      {num === '5+' ? '5+ people' : (num === 1 ? '1 person' : num + ' people')}
                     </button>
                   ))}
                 </div>
@@ -1152,6 +1154,7 @@
       supabaseConfig,
       setSupabaseConfig,
       onUpdateRequestStatus, 
+      onDeleteRequest,
       onLogout 
     }) {
       const [activeTab, setActiveTab] = useState('map'); // 'map' | 'list' | 'photos' | 'settings'
@@ -1236,7 +1239,7 @@
             <div style="font-size:12px; line-height:1.4;">
               <strong style="text-transform:uppercase; color:#f87171;">${req.category} Assistance</strong><br/>
               <b>Status:</b> ${req.status}<br/>
-              <b>People:</b> ${req.people_count || 1}<br/>
+              <b>People:</b> ${(req.people_count === '5+' || req.people_count >= 5 || req.people_count === 6) ? '5+' : (req.people_count || 1)}<br/>
               <b>Note:</b> ${req.notes || 'None'}<br/>
               ${req.photo_url ? `<img src="${req.photo_url}" style="width:100%; max-height:80px; object-fit:cover; margin-top:4px; border-radius:4px;"/>` : ''}
               <div style="margin-top:6px; font-size:10px; color:#94a3b8;">
@@ -1484,7 +1487,7 @@
                     <p className="text-zinc-200 text-xs">{req.notes}</p>
 
                     <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-1 border-t border-zinc-800/80">
-                      <span>👥 {req.people_count || 1} people in need</span>
+                      <span>👥 {(req.people_count === '5+' || req.people_count >= 5 || req.people_count === 6) ? '5+' : (req.people_count || 1)} people in need</span>
                       <span className="font-mono">{Number(req.latitude).toFixed(4)}, {Number(req.longitude).toFixed(4)}</span>
                     </div>
 
@@ -1517,7 +1520,17 @@
                         </button>
                       )}
                       {req.status === 'resolved' && (
-                        <span className="text-[11px] text-zinc-500 italic">Incident resolved</span>
+                        <div className="flex-1 flex items-center justify-between gap-2">
+                          <span className="text-[11px] text-emerald-400 font-medium">✓ Case Resolved</span>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteRequest(req.id)}
+                            className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-medium text-[11px] flex items-center gap-1 transition shadow"
+                            title="Delete resolved case"
+                          >
+                            🗑️ Delete Request
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -1556,45 +1569,82 @@
           {/* TAB 4: GEOFENCE & SUPABASE SETTINGS */}
           {activeTab === 'settings' && (
             <div className="flex-1 p-4 overflow-y-auto custom-scroll space-y-4 text-xs">
+              {/* Disaster Geofence Radius */}
               <div className="p-4 rounded-xl bg-[#12141a] border border-zinc-800 space-y-3">
-                <h3 className="font-bold text-white text-sm">Disaster Geofence Configuration</h3>
-                <p className="text-zinc-400 text-[11px]">
-                  Adjust the epicenter and allowed radius. Any citizen outside this perimeter will have photo uploads and requests restricted.
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold text-white text-sm">Disaster Geofence Radius</h3>
+                  <span className="px-2.5 py-0.5 rounded-full bg-rose-950 text-rose-300 border border-rose-800 font-mono text-xs font-bold">
+                    {disasterZone.radiusKm} km
+                  </span>
+                </div>
+                <p className="text-zinc-400 text-[11px] leading-relaxed">
+                  Citizens located outside this radius are completely blocked from submitting requests or uploading photos.
                 </p>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-zinc-400 block mb-1">Center Latitude</label>
-                    <input 
-                      type="number" 
-                      step="0.0001"
-                      value={disasterZone.lat}
-                      onChange={(e) => setDisasterZone({ ...disasterZone, lat: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-zinc-900 border border-zinc-700 rounded p-1.5 font-mono text-white"
-                    />
+                {/* Radius Slider & Number Input */}
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center justify-between text-xs text-zinc-300">
+                    <span>Allowed Radius:</span>
+                    <div className="flex items-center gap-1">
+                      <input 
+                        type="number" 
+                        min="1" 
+                        max="200" 
+                        value={disasterZone.radiusKm}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value) || 1;
+                          const updated = { ...disasterZone, radiusKm: val };
+                          setDisasterZone(updated);
+                          localStorage.setItem('displace_disaster_zone', JSON.stringify(updated));
+                        }}
+                        className="w-16 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-right text-xs font-mono text-white focus:outline-none focus:border-rose-500"
+                      />
+                      <span className="text-zinc-400 text-xs">km</span>
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-zinc-400 block mb-1">Center Longitude</label>
-                    <input 
-                      type="number" 
-                      step="0.0001"
-                      value={disasterZone.lng}
-                      onChange={(e) => setDisasterZone({ ...disasterZone, lng: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-zinc-900 border border-zinc-700 rounded p-1.5 font-mono text-white"
-                    />
-                  </div>
-                </div>
 
-                <div>
-                  <label className="text-zinc-400 block mb-1">Allowed Radius: {disasterZone.radiusKm} km</label>
                   <input 
                     type="range" 
                     min="1" 
                     max="100" 
+                    step="1"
                     value={disasterZone.radiusKm}
-                    onChange={(e) => setDisasterZone({ ...disasterZone, radiusKm: parseFloat(e.target.value) })}
-                    className="w-full"
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value) || 1;
+                      const updated = { ...disasterZone, radiusKm: val };
+                      setDisasterZone(updated);
+                      localStorage.setItem('displace_disaster_zone', JSON.stringify(updated));
+                    }}
+                    className="w-full accent-rose-500 cursor-pointer"
                   />
+
+                  {/* Quick Radius Presets */}
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <span className="text-[10px] text-zinc-500 mr-1">Presets:</span>
+                    {[5, 10, 25, 50, 100].map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => {
+                          const updated = { ...disasterZone, radiusKm: r };
+                          setDisasterZone(updated);
+                          localStorage.setItem('displace_disaster_zone', JSON.stringify(updated));
+                        }}
+                        className={`flex-1 py-1 rounded text-[11px] font-medium transition ${
+                          disasterZone.radiusKm === r
+                            ? 'bg-white text-black font-bold'
+                            : 'bg-zinc-800 text-zinc-300 hover:text-white'
+                        }`}
+                      >
+                        {r}km
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-zinc-800/80 flex items-center justify-between text-[11px] text-zinc-500">
+                  <span>Center: {disasterZone.lat.toFixed(4)}, {disasterZone.lng.toFixed(4)}</span>
+                  <span className="text-emerald-400 font-mono text-[10px]">Active Geofence</span>
                 </div>
               </div>
 
