@@ -802,11 +802,10 @@
           attributionControl: false
         }).setView([lat, lng], 15);
 
-        // High-reliability OpenStreetMap tiles via CARTO CDN (bypasses OSM 403 volunteer restrictions on file/localhost)
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        // Clean High-Definition Street Map (No watermark, no API key required)
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
           maxZoom: 19,
-          subdomains: 'abcd',
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          attribution: 'Tiles &copy; Esri &mdash; Street Map'
         }).addTo(map);
 
         // Marker for user emergency location
@@ -1159,6 +1158,9 @@
       const [filterCategory, setFilterCategory] = useState('all');
       const [filterStatus, setFilterStatus] = useState('all');
       const [selectedPhotoModal, setSelectedPhotoModal] = useState(null);
+      const [mapProvider, setMapProvider] = useState(() => localStorage.getItem('displace_map_provider') || 'esri');
+      const [mapApiKey, setMapApiKey] = useState(() => localStorage.getItem('displace_map_api_key') || '');
+      const [showApiKeyPrompt, setShowApiKeyPrompt] = useState(false);
       const dashboardMapRef = useRef(null);
       const mapInstanceRef = useRef(null);
 
@@ -1173,12 +1175,31 @@
         const map = L.map(dashboardMapRef.current).setView([disasterZone.lat, disasterZone.lng], 13);
         mapInstanceRef.current = map;
 
-        // High-reliability OpenStreetMap tiles via CARTO CDN (bypasses OSM 403 volunteer restrictions on file/localhost)
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        // Dynamic High-Reliability Map Tile Layer
+        let tileUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}';
+        let tileOptions = {
           maxZoom: 19,
-          subdomains: 'abcd',
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        }).addTo(map);
+          attribution: 'Tiles &copy; Esri &mdash; High-Def Street Map'
+        };
+
+        if (mapProvider === 'carto') {
+          tileUrl = mapApiKey.trim() 
+            ? `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?api_key=${encodeURIComponent(mapApiKey.trim())}`
+            : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+          tileOptions = {
+            maxZoom: 19,
+            subdomains: 'abcd',
+            attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+          };
+        } else if (mapProvider === 'satellite') {
+          tileUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+          tileOptions = {
+            maxZoom: 19,
+            attribution: 'Tiles &copy; Esri World Imagery'
+          };
+        }
+
+        L.tileLayer(tileUrl, tileOptions).addTo(map);
 
         // Disaster Perimeter Circle
         const zoneCircle = L.circle([disasterZone.lat, disasterZone.lng], {
@@ -1235,7 +1256,7 @@
             mapInstanceRef.current = null;
           }
         };
-      }, [activeTab, requests, disasterZone]);
+      }, [activeTab, requests, disasterZone, mapProvider, mapApiKey]);
 
       // Filtered requests
       const filteredRequests = requests.filter(r => {
@@ -1329,6 +1350,86 @@
           {/* TAB 1: LIVE MAP */}
           {activeTab === 'map' && (
             <div className="flex-1 flex flex-col relative">
+              {/* Map Layer & API Key Controller Bar */}
+              <div className="px-3 py-1.5 bg-[#141720] border-b border-zinc-800 flex items-center justify-between text-[11px] gap-1">
+                <div className="flex items-center gap-1">
+                  <span className="text-zinc-400 text-[10px] mr-0.5">Map:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMapProvider('esri');
+                      localStorage.setItem('displace_map_provider', 'esri');
+                    }}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium transition ${
+                      mapProvider === 'esri' ? 'bg-white text-black font-semibold' : 'bg-zinc-800 text-zinc-300 hover:text-white'
+                    }`}
+                  >
+                    🗺️ Streets
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMapProvider('satellite');
+                      localStorage.setItem('displace_map_provider', 'satellite');
+                    }}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium transition ${
+                      mapProvider === 'satellite' ? 'bg-white text-black font-semibold' : 'bg-zinc-800 text-zinc-300 hover:text-white'
+                    }`}
+                  >
+                    🛰️ Satellite
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMapProvider('carto');
+                      localStorage.setItem('displace_map_provider', 'carto');
+                    }}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium transition ${
+                      mapProvider === 'carto' ? 'bg-white text-black font-semibold' : 'bg-zinc-800 text-zinc-300 hover:text-white'
+                    }`}
+                  >
+                    🎨 CARTO
+                  </button>
+                </div>
+                
+                <button
+                  type="button"
+                  onClick={() => setShowApiKeyPrompt(!showApiKeyPrompt)}
+                  className={`px-2 py-0.5 rounded text-[10px] border font-mono transition ${
+                    mapApiKey 
+                      ? 'bg-emerald-950/60 text-emerald-400 border-emerald-700 hover:bg-emerald-900' 
+                      : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700'
+                  }`}
+                  title="Configure Map API Key"
+                >
+                  🔑 {mapApiKey ? 'API Key ✓' : '+ API Key'}
+                </button>
+              </div>
+
+              {/* Inline API Key input bar if toggled */}
+              {showApiKeyPrompt && (
+                <div className="p-2.5 bg-[#181c27] border-b border-zinc-700 text-xs flex items-center gap-2">
+                  <span className="text-zinc-300 text-[11px] whitespace-nowrap">API Key:</span>
+                  <input
+                    type="text"
+                    value={mapApiKey}
+                    placeholder="Paste CARTO / Map API key..."
+                    onChange={(e) => {
+                      setMapApiKey(e.target.value);
+                      localStorage.setItem('displace_map_api_key', e.target.value);
+                    }}
+                    className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-white placeholder-zinc-500 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKeyPrompt(false)}
+                    className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-[11px]"
+                  >
+                    Save
+                  </button>
+                </div>
+              )}
+
               <div ref={dashboardMapRef} className="flex-1 w-full min-h-[420px]"></div>
               <div className="p-2.5 bg-[#12141a] border-t border-zinc-800 text-[11px] text-zinc-400 flex items-center justify-between">
                 <span>🔴 Disaster Zone: {disasterZone.radiusKm} km radius</span>
@@ -1536,6 +1637,47 @@
 
                 <div className="pt-2 text-[10px] text-zinc-500 font-mono">
                   Schema script: `supabase_schema.sql` included in root folder.
+                </div>
+              </div>
+
+              {/* Map Service & API Key Settings */}
+              <div className="p-4 rounded-xl bg-[#12141a] border border-zinc-800 space-y-3">
+                <h3 className="font-bold text-white text-sm">Map Service & API Key</h3>
+                <p className="text-zinc-400 text-[11px]">
+                  DisplaceOS defaults to Clean Street Maps (no watermark, no API key needed). If you use CARTO or another tile provider, you can paste your API key below.
+                </p>
+
+                <div>
+                  <label className="text-zinc-400 block mb-1">Active Map Provider</label>
+                  <select
+                    value={mapProvider}
+                    onChange={(e) => {
+                      setMapProvider(e.target.value);
+                      localStorage.setItem('displace_map_provider', e.target.value);
+                    }}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded p-1.5 text-xs text-white"
+                  >
+                    <option value="esri">Clean Street Map (Default - 100% Watermark Free, No Key Required)</option>
+                    <option value="satellite">Satellite Imagery (High-Res Aerial - No Key Required)</option>
+                    <option value="carto">CARTO Voyager (Requires API key below to remove watermark)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-zinc-400 block mb-1">Map API Key</label>
+                  <input 
+                    type="text"
+                    placeholder="Enter CARTO / Mapbox API Key"
+                    value={mapApiKey}
+                    onChange={(e) => {
+                      setMapApiKey(e.target.value);
+                      localStorage.setItem('displace_map_api_key', e.target.value);
+                    }}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded p-1.5 text-xs text-white font-mono placeholder-zinc-500"
+                  />
+                  <p className="text-[10px] text-zinc-500 mt-1">
+                    {mapApiKey ? '✓ API Key configured and stored locally.' : 'No API key entered. Clean Street Map will be used without watermarks.'}
+                  </p>
                 </div>
               </div>
             </div>
